@@ -23,9 +23,18 @@ from maschine_mk2 import (
     make_transport_payload,
     decode_btn_input,
     decode_pressure_input,
+    render_text,
+    make_display_packets,
 )
 
 NI_VENDOR_ID = 0x17CC  # Native Instruments Vendor ID
+
+def send_displays(dev):
+    """Render text into both displays and send to device."""
+    for pkt in make_display_packets(0, render_text("Andyland.info")):
+        dev.write(pkt)
+    for pkt in make_display_packets(1, render_text("maschinist.mk2")):
+        dev.write(pkt)
 
 
 def find_devices():
@@ -73,6 +82,7 @@ def monitor(device_info):
         dev.set_nonblocking(True)
 
         print("Verbunden! Warte auf Daten...\n")
+        send_displays(dev)
         print(f"  {'Zeit':<12}  Rohdaten")
         print(f"  {'':-<12}  {'':-<60}")
 

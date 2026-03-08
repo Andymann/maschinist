@@ -286,3 +286,138 @@ def decode_pressure_input(data):
         if lsb_idx < len(data) and msb_idx < len(data):
             result[name] = (data[lsb_idx] | (data[msb_idx] << 8)) & 0xFFF
     return result
+
+
+# ── Outgoing: display (report ID 0xE0/0xE1, 9-byte header + 256-byte chunks) ─
+# Buffer layout: 2048 bytes per display (32 bytes/row × 64 rows).
+# The display is 256 columns × 64 rows, 1 bit per pixel, row-major, MSB-first.
+DISPLAY_ROWS        = 64
+DISPLAY_COLS        = 256
+DISPLAY_ROW_BYTES   = 32   # 256 columns / 8 bits
+DISPLAY_BUFFER_SIZE = DISPLAY_ROW_BYTES * DISPLAY_ROWS  # 2048
+
+def make_display_buffer():
+    """Return a blank (all-black) display buffer (2048 bytes)."""
+    return bytearray(DISPLAY_BUFFER_SIZE)
+
+def set_pixel(buf, x, y, on=True):
+    """Set or clear a pixel at (x, y). x: 0-255, y: 0-63.
+
+    Row-major layout: each row is DISPLAY_ROW_BYTES (32) bytes.
+    MSB of each byte = leftmost pixel: mask = 0x80 >> (x & 7)
+    """
+    if not (0 <= x < DISPLAY_COLS and 0 <= y < DISPLAY_ROWS):
+        return
+    idx  = DISPLAY_ROW_BYTES * y + (x >> 3)
+    mask = 0x80 >> (x & 7)
+    if on:
+        buf[idx] |= mask
+    else:
+        buf[idx] &= ~mask
+
+def fill_rect(buf, x, y, w, h, on=True):
+    """Fill a rectangle of pixels."""
+    for row in range(y, y + h):
+        for col in range(x, x + w):
+            set_pixel(buf, col, row, on)
+
+def make_display_packets(display_index, buf):
+    """Return a list of 8 HID packets that update the full display.
+
+    Each packet is 265 bytes: 9-byte header + 256 bytes of pixel data.
+
+    Usage:
+        buf = make_display_buffer()
+        set_pixel(buf, 10, 10)
+        for pkt in make_display_packets(0, buf):
+            dev.write(pkt)
+    """
+    packets = []
+    for chunk in range(8):
+        header = [
+            0xE0 | display_index,  # report ID + display select
+            0x00,
+            0x00,
+            chunk * 8,             # row offset (0, 8, 16 … 56)
+            0x00,
+            0x20,                  # 32 columns of controller RAM
+            0x00,
+            0x08,                  # 8 rows per chunk
+            0x00,
+        ]
+        packets.append(header + list(buf[chunk * 256 : (chunk + 1) * 256]))
+    return packets
+
+
+# ── Text rendering ────────────────────────────────────────────────────────────
+# Requires Pillow: pip install Pillow
+
+# Candidate font paths (macOS + Linux). First one that exists is used.
+_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/System/Library/Fonts/SFNSDisplay.otf",
+    "/Library/Fonts/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+]
+
+def _load_font(size):
+    """Return an ImageFont at the given size, falling back to the PIL default."""
+    from PIL import ImageFont
+    for path in _FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(path, size)
+        except (IOError, OSError):
+            continue
+    return ImageFont.load_default()
+
+def render_text(text, max_width=DISPLAY_COLS, height=DISPLAY_ROWS):
+    """Render text as large as possible, centered, into a display buffer.
+
+    Uses draw.textbbox() (Pillow >= 8.0) which reliably accounts for font
+    metrics and bearing, so the visible text is truly centred both horizontally
+    and vertically.
+
+    Usage:
+        buf = render_text("Hello")
+        for pkt in make_display_packets(0, buf):
+            dev.write(pkt)
+    """
+    from PIL import Image, ImageDraw
+
+    cx = max_width // 2
+    cy = height // 2
+
+    # Binary-search for the largest font size whose visible width fits
+    lo, hi = 6, height * 2
+    while lo < hi - 1:
+        mid = (lo + hi) // 2
+        font = _load_font(mid)
+        # Use anchor="mm" so bbox is measured relative to the centre point
+        bbox = Image.new("1", (1, 1), 0)
+        tmp_draw = ImageDraw.Draw(bbox)
+        b = tmp_draw.textbbox((0, 0), text, font=font, anchor="mm")
+        if b[2] - b[0] <= max_width:
+            lo = mid
+        else:
+            hi = mid
+
+    font = _load_font(lo)
+
+    # Render to a greyscale canvas (avoids mode-"1" quantisation artefacts)
+    img = Image.new("L", (max_width, height), 0)
+    draw = ImageDraw.Draw(img)
+    # anchor="mm" places the visual centre of the text exactly at (cx, cy)
+    draw.text((cx, cy), text, font=font, fill=255, anchor="mm")
+
+    # Save a preview PNG next to this file for visual debugging
+    import os
+    png_path = os.path.join(os.path.dirname(__file__), f"display_preview_{text[:16]}.png")
+    img.save(png_path)
+
+    buf = make_display_buffer()
+    for py in range(height):
+        for px in range(max_width):
+            if img.getpixel((px, py)) > 128:
+                set_pixel(buf, px, py)
+    return buf
