@@ -19,7 +19,41 @@ except ImportError:
 
 NI_VENDOR_ID = 0x17CC  # Native Instruments Vendor ID
 
-PAYLOAD = [0x80] + [0x00] * 48  # 49 bytes, first byte 0x80
+# Byte index within PAD payload (byte 0 = report ID 0x80, bytes 1-48 = 16 pads × R/G/B).
+PAD = {
+    # --- Pad row 1 (bottom) ---
+    'pad1_r':  1,  'pad1_g':  2,  'pad1_b':  3,
+    'pad2_r':  4,  'pad2_g':  5,  'pad2_b':  6,
+    'pad3_r':  7,  'pad3_g':  8,  'pad3_b':  9,
+    'pad4_r': 10,  'pad4_g': 11,  'pad4_b': 12,
+    # --- Pad row 2 ---
+    'pad5_r': 13,  'pad5_g': 14,  'pad5_b': 15,
+    'pad6_r': 16,  'pad6_g': 17,  'pad6_b': 18,
+    'pad7_r': 19,  'pad7_g': 20,  'pad7_b': 21,
+    'pad8_r': 22,  'pad8_g': 23,  'pad8_b': 24,
+    # --- Pad row 3 ---
+    'pad9_r':  25,  'pad9_g':  26,  'pad9_b':  27,
+    'pad10_r': 28,  'pad10_g': 29,  'pad10_b': 30,
+    'pad11_r': 31,  'pad11_g': 32,  'pad11_b': 33,
+    'pad12_r': 34,  'pad12_g': 35,  'pad12_b': 36,
+    # --- Pad row 4 (top) ---
+    'pad13_r': 37,  'pad13_g': 38,  'pad13_b': 39,
+    'pad14_r': 40,  'pad14_g': 41,  'pad14_b': 42,
+    'pad15_r': 43,  'pad15_g': 44,  'pad15_b': 45,
+    'pad16_r': 46,  'pad16_g': 47,  'pad16_b': 48,
+}
+
+def make_pad_payload(**pads):
+    """Return a PAD payload list with the given pad colour channels set.
+
+    Usage:
+        dev.write(make_pad_payload(pad1_r=0xff))
+        dev.write(make_pad_payload(pad13_r=brightness, pad13_g=0x00, pad13_b=0x00))
+    """
+    payload = [0x80] + [0x00] * 48
+    for name, value in pads.items():
+        payload[PAD[name]] = value
+    return payload
 
 # Byte index within PAYLOAD_BTN for each button (byte 0 = report ID 0x82).
 # Fill in the correct index once you've confirmed the mapping via USB sniffing.
@@ -206,16 +240,15 @@ def monitor(device_info):
                 value = (data[25] | (data[26] << 8)) & 0xFFF  # 12-bit value from bytes 26+27
                 #print(f"  {ts}  {value}")
                 if value > 300 and not sent_high:
-                    PAYLOAD[37] = int(0.06 * value) #0xff
-                    dev.write(PAYLOAD)
+                    brightness = int(0.06 * value)
+                    dev.write(make_pad_payload(pad13_r=brightness, pad1_g=0xff))
                     #sent_high = True
                     #dev.write(PAYLOAD_TRANSPORT)
                     dev.write(make_btn_payload(tempo=0xff, scene=0x10))
                     dev.write(make_transport_payload(group_a_r1=0xFF, group_a_r2=0xFF))
                     sent_low = False
                 elif value < 300 and not sent_low:
-                    PAYLOAD[37] = 0x00
-                    dev.write(PAYLOAD)
+                    dev.write(make_pad_payload(pad13_r=0x00))
                     #dev.write(PAYLOAD_TRANSPORT_OFF)
                     dev.write(make_btn_payload(tempo=0x00, scene=0x00))
                     dev.write(make_transport_payload(group_a_r1=0x00, group_a_r2=0x00))
