@@ -69,7 +69,7 @@ BTN = {
     'auto':       8,
     # --- User-Buttons on top of device ---
     'user1':      9,
-    'usder2':    10,
+    'user2':    10,
     'user3':     11,
     'user4':     12,
     'user5':     13,
@@ -89,11 +89,132 @@ BTN = {
     'volume':    25,
     'swing':     26,
     'tempo':     27,
-    'back':      28,
-    'forth':     29,
+    'left':      28,
+    'right':     29,
     'enter':     30,
     'noterepeat': 31,
 }
+
+# --- Incoming button report (report ID 0x01, 25 bytes total) ---
+# Structure: BTN_INPUT[byte_index][bitmask] = button_name
+# Example: data[1] == 0x01  →  byte 1, bit 0  →  'user1'
+#          data[1] == 0x02  →  byte 1, bit 1  →  'user2'
+# Adjust names/masks once confirmed via USB sniffing.
+BTN_INPUT = {
+    1: {
+        0x01: 'user1',
+        0x02: 'user2',
+        0x04: 'user3',
+        0x08: 'user4',
+        0x10: 'user5',
+        0x20: 'user6',
+        0x40: 'user7',
+        0x80: 'user8',
+    },
+    2: {
+        0x01: 'ctrl',
+        0x02: 'step',
+        0x04: 'browse',
+        0x08: 'sampling',
+        0x10: 'left',
+        0x20: 'right',
+        0x40: 'all',
+        0x80: 'auto',
+    },
+    3: {
+        0x01: 'volume',
+        0x02: 'swing',
+        0x04: 'tempo',
+        0x08: 'left',
+        0x10: 'right',
+        0x20: 'enter',
+        0x40: 'noterepeat',
+    },
+    4: {
+        0x01: 'group_a',
+        0x02: 'group_b',
+        0x04: 'group_c',
+        0x08: 'group_d',
+        0x10: 'group_e',
+        0x20: 'group_f',
+        0x40: 'group_g',
+        0x80: 'group_h',
+    },
+    5:  {
+        0x01: 'restart', 
+        0x02: 'left', 
+        0x04: 'right', 
+        0x08: 'grid',
+        0x10: 'play',
+        0x20: 'rec',
+        0x40: 'erase',
+        0x80: 'shift'
+    },
+    6:  {
+        0x01: 'scene', 
+        0x02: 'pattern', 
+        0x04: 'padmode', 
+        0x08: 'navigate',
+        0x10: 'duplicate',
+        0x20: 'select',
+        0x40: 'solo',
+        0x80: 'mute'
+    },
+
+    7:  {0x01: 'unused_7_0', 0x02: 'unused_7_1', 0x04: 'unused_7_2', 0x08: 'unused_7_3',
+         0x10: 'unused_7_4', 0x20: 'unused_7_5', 0x40: 'unused_7_6', 0x80: 'unused_7_7'},
+    # byte 8:    main encoder  (handled via ENCODER_INPUT, not bitmask)
+    # bytes 9+10: encoder 1   (handled via ENCODER_INPUT, not bitmask)
+}
+
+# Encoder definitions: name -> (lsb_byte_index, msb_byte_index, max_value)
+# msb_byte_index = None for single-byte encoders.
+# Value = lsb | (msb << 8), range 0x0000 .. max_value
+ENCODER_INPUT = {
+    'main_encoder': (8,  None, 0x0F),    # 4-bit single byte, 0x00 .. 0x0F
+    'encoder1':     (9,  10,   0x03FF),  # 10-bit, 0x0000 .. 0x03FF
+    'encoder2':     (11, 12,   0x03FF),
+    'encoder3':     (13, 14,   0x03FF),
+    'encoder4':     (15, 16,   0x03FF),
+    'encoder5':     (17, 18,   0x03FF),
+    'encoder6':     (19, 20,   0x03FF),
+    'encoder7':     (21, 22,   0x03FF),
+    'encoder8':     (23, 24,   0x03FF),
+}
+
+def decode_btn_input(data):
+    """Decode a 25-byte button report (report ID 0x01).
+
+    Returns a tuple (pressed, encoders):
+        pressed  – list of button names currently held down
+        encoders – dict of encoder name -> current value (int)
+
+    Usage:
+        data = dev.read(64)
+        if data and data[0] == 0x01:
+            pressed, encoders = decode_btn_input(data)
+            print(pressed)           # e.g. ['user1', 'scene']
+            print(encoders)          # e.g. {'encoder1': 512}
+    """
+    pressed = []
+    for byte_idx, masks in BTN_INPUT.items():
+        if byte_idx >= len(data):
+            break
+        byte_val = data[byte_idx]
+        for mask, name in masks.items():
+            if byte_val & mask:
+                pressed.append(name)
+
+    encoders = {}
+    for name, (lsb_idx, msb_idx, _) in ENCODER_INPUT.items():
+        if lsb_idx < len(data):
+            if msb_idx is None:
+                encoders[name] = data[lsb_idx]
+            elif msb_idx < len(data):
+                encoders[name] = data[lsb_idx] | (data[msb_idx] << 8)
+
+    return pressed, encoders
+
 
 def make_btn_payload(**buttons):
     """Return a PAYLOAD_BTN list with the given buttons set to 0xff.
@@ -254,6 +375,9 @@ def monitor(device_info):
                     dev.write(make_transport_payload(group_a_r1=0x00, group_a_r2=0x00))
                     sent_low = True
                     sent_high = False
+            elif data and data[0] == 0x01:
+                pressed = decode_btn_input(data)
+                print(pressed)  # e.g. ['user1', 'scene']
             else:
                 time.sleep(0.001)
 
