@@ -216,6 +216,51 @@ def decode_btn_input(data):
     return pressed, encoders
 
 
+# --- Continuous pressure stream (report ID 0x20, 64 bytes) ---
+# Sent by the device whenever a pad is touched.
+# Field format: (lsb_byte_index, msb_byte_index, bit_mask)
+# Field format: pad_name -> (lsb_byte_index, msb_byte_index)
+# 12-bit value = (data[lsb] | (data[msb] << 8)) & 0xFFF, range 0 .. 4095
+PRESSURE_INPUT = {
+    'pad1':  (25, 26),
+    'pad2':  (27, 28),
+    'pad3':  (29, 30),
+    'pad4':  (31, 32),
+    'pad5':  (17, 18),
+    'pad6':  (19, 20),
+    'pad7':  (21, 22),
+    'pad8':  (23, 24),
+    'pad9':  (9, 10),
+    'pad10': (11, 12),
+    'pad11': (13, 14),
+    'pad12': (15, 16),
+    'pad13': (1,    2),
+    'pad14': (3,    4),
+    'pad15': (5,    6),
+    'pad16': (7,    8),
+}
+
+def decode_pressure_input(data):
+    """Decode a 64-byte pressure report (report ID 0x20).
+
+    Returns a dict of pad_name -> pressure value (0 .. 4095).
+    Pads with unknown byte positions are omitted.
+
+    Usage:
+        data = dev.read(64)
+        if data and data[0] == 0x20:
+            p = decode_pressure_input(data)
+            print(p.get('pad13'))  # 0 .. 4095
+    """
+    result = {}
+    for name, (lsb_idx, msb_idx) in PRESSURE_INPUT.items():
+        if lsb_idx is None or msb_idx is None:
+            continue
+        if lsb_idx < len(data) and msb_idx < len(data):
+            result[name] = (data[lsb_idx] | (data[msb_idx] << 8)) & 0xFFF
+    return result
+
+
 def make_btn_payload(**buttons):
     """Return a PAYLOAD_BTN list with the given buttons set to 0xff.
 
@@ -358,7 +403,8 @@ def monitor(device_info):
             data = dev.read(64)
             if data and data[0] == 0x20:
                 ts = time.strftime("%H:%M:%S.") + f"{int(time.time() * 1000) % 1000:03d}"
-                value = (data[25] | (data[26] << 8)) & 0xFFF  # 12-bit value from bytes 26+27
+                pressure = decode_pressure_input(data)
+                value = pressure.get('pad1', 0)
                 #print(f"  {ts}  {value}")
                 if value > 300 and not sent_high:
                     brightness = int(0.06 * value)
