@@ -46,8 +46,8 @@ BTN = {
     'step':       2,
     'browse':     3,
     'sampling':   4,
-    'back':       5,
-    'forward':    6,
+    'control_left':       5,
+    'control_right':    6,
     'all':        7,
     'auto':       8,
     # --- User-Buttons on top of device ---
@@ -72,8 +72,8 @@ BTN = {
     'volume':    25,
     'swing':     26,
     'tempo':     27,
-    'left':      28,
-    'right':     29,
+    'master_left':      28,
+    'master_right':     29,
     'enter':     30,
     'noterepeat': 31,
 }
@@ -112,8 +112,8 @@ TRANSPORT = {
     'group_h_r2': 46,  'group_h_g2': 47,  'group_h_b2': 48,
     # --- Transport controls ---
     'restart':    49,
-    'left':       50,
-    'right':      51,
+    'transport_left':       50,
+    'transport_right':      51,
     'grid':       52,
     'play':       53,
     'rec':        54,
@@ -152,8 +152,8 @@ BTN_INPUT = {
         0x02: 'step',
         0x04: 'browse',
         0x08: 'sampling',
-        0x10: 'left',
-        0x20: 'right',
+        0x10: 'control_left',
+        0x20: 'control_right',
         0x40: 'all',
         0x80: 'auto',
     },
@@ -161,8 +161,8 @@ BTN_INPUT = {
         0x01: 'volume',
         0x02: 'swing',
         0x04: 'tempo',
-        0x08: 'left',
-        0x10: 'right',
+        0x08: 'master_left',
+        0x10: 'master_right',
         0x20: 'enter',
         0x40: 'noterepeat',
         0x80: 'main_encoder_press',
@@ -179,8 +179,8 @@ BTN_INPUT = {
     },
     5: {
         0x01: 'restart',
-        0x02: 'left',
-        0x04: 'right',
+        0x02: 'transport_left',
+        0x04: 'transport_right',
         0x08: 'grid',
         0x10: 'play',
         0x20: 'rec',
@@ -350,6 +350,62 @@ def make_display_packets(display_index, buf):
     return packets
 
 
+# ── Encoder values & names ────────────────────────────────────────────────────
+# 128 values / names split into 16 groups of 8.
+# Index = group * 8 + slot  (slot 0-7 matches ENCODER_AREAS order).
+encoder_values = [0] * 128
+encoder_names  = [f'P{i + 1}' for i in range(128)]
+encoder_names[0] = '  cc 1  '
+encoder_names[1] = '  cc 2  '
+encoder_names[2] = '  cc 3  '
+encoder_names[3] = '  cc 4  '
+encoder_names[4] = '  cc 5  ' 
+encoder_names[5] = '  cc 6  '
+encoder_names[6] = '  cc 7  '
+encoder_names[7] = '  cc 8  '
+encoder_names[8] = '  cc 9  '
+encoder_names[9] = '  cc 10  '
+encoder_names[10] = '  cc 11  '
+
+
+# ── Display area grid ─────────────────────────────────────────────────────────
+# Each display is divided into a 4-column × 3-row grid = 12 areas per display.
+# Areas 1-12: display 0 (left).  Areas 13-24: display 1 (right).
+# Numbering is left-to-right, top-to-bottom within each display.
+#
+#   display 0          display 1
+#  ┌─1──2──3──4─┐    ┌─13─14─15─16─┐
+#  │  5  6  7  8│    │ 17 18 19 20 │
+#  └─9─10─11─12┘    └─21─22─23─24─┘
+
+AREA_COLS = 4
+AREA_ROWS = 3
+AREA_TOTAL = AREA_COLS * AREA_ROWS  # 12 per display
+
+# Pre-compute column x-positions and row y-positions (pixel-exact)
+_AREA_COL_X = [DISPLAY_COLS * c // AREA_COLS for c in range(AREA_COLS)]
+_AREA_COL_W = [DISPLAY_COLS * (c + 1) // AREA_COLS - DISPLAY_COLS * c // AREA_COLS
+               for c in range(AREA_COLS)]
+_AREA_ROW_Y = [DISPLAY_ROWS * r // AREA_ROWS for r in range(AREA_ROWS)]
+_AREA_ROW_H = [DISPLAY_ROWS * (r + 1) // AREA_ROWS - DISPLAY_ROWS * r // AREA_ROWS
+               for r in range(AREA_ROWS)]
+
+
+def get_area_info(area_num):
+    """Return (display_index, x, y, w, h) for the given area number (1-24).
+
+    Areas 1-12 live on display 0; areas 13-24 on display 1.
+    Within each display areas are numbered left-to-right, top-to-bottom.
+    """
+    if not (1 <= area_num <= AREA_TOTAL * 2):
+        raise ValueError(f"area_num must be 1-{AREA_TOTAL * 2}, got {area_num}")
+    idx          = area_num - 1
+    display_idx  = idx // AREA_TOTAL
+    local        = idx % AREA_TOTAL
+    row, col     = divmod(local, AREA_COLS)
+    return display_idx, _AREA_COL_X[col], _AREA_ROW_Y[row], _AREA_COL_W[col], _AREA_ROW_H[row]
+
+
 # ── Text rendering ────────────────────────────────────────────────────────────
 # Requires Pillow: pip install Pillow
 
@@ -421,4 +477,64 @@ def render_text(text, max_width=DISPLAY_COLS, height=DISPLAY_ROWS):
         for px in range(max_width):
             if img.getpixel((px, py)) > 128:
                 set_pixel(buf, px, py)
+    return buf
+
+
+def render_text_in_area(buf, area_num, text):
+    """Render text centered within a grid area into an existing display buffer.
+
+    The area's pixels are cleared first, then the text is drawn as large as
+    possible while fitting within the area bounds.
+
+    Args:
+        buf:      A display buffer (bytearray from make_display_buffer()) for
+                  the display that owns this area.
+        area_num: Area number on that display (1-12 for display 0, 13-24 for
+                  display 1).  Use get_area_info() to confirm which display an
+                  area belongs to before calling this function.
+        text:     String to render.
+
+    Usage:
+        bufs = [make_display_buffer(), make_display_buffer()]
+        render_text_in_area(bufs[0], 1,  "BPM")
+        render_text_in_area(bufs[0], 2,  "128")
+        render_text_in_area(bufs[1], 13, "Vol")
+        for display_idx, buf in enumerate(bufs):
+            for pkt in make_display_packets(display_idx, buf):
+                dev.write(pkt)
+    """
+    from PIL import Image, ImageDraw
+
+    _, x, y, w, h = get_area_info(area_num)
+
+    # Clear the area in the buffer
+    fill_rect(buf, x, y, w, h, on=False)
+
+    if not text:
+        return buf
+
+    # Binary-search for the largest font size that fits within the area.
+    # Check actual pixel bounds after centering, not just total span.
+    cx, cy = w // 2, h // 2
+    lo, hi = 4, h * 2
+    while lo < hi - 1:
+        mid = (lo + hi) // 2
+        font = _load_font(mid)
+        tmp = Image.new("1", (1, 1), 0)
+        b = ImageDraw.Draw(tmp).textbbox((0, 0), text, font=font, anchor="mm")
+        if (cx + b[0] >= 0 and cx + b[2] <= w and
+                cy + b[1] >= 0 and cy + b[3] <= h):
+            lo = mid
+        else:
+            hi = mid
+
+    font = _load_font(lo)
+    img = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(img).text((w // 2, h // 2), text, font=font, fill=255, anchor="mm")
+
+    for py in range(h):
+        for px in range(w):
+            if img.getpixel((px, py)) > 128:
+                set_pixel(buf, x + px, y + py)
+
     return buf
