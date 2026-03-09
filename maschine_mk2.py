@@ -196,7 +196,9 @@ BTN_INPUT = {
         0x40: 'solo',
         0x80: 'mute',
     },
-    # byte 7:    encoder activity flags (see ENCODER_INPUT, not bitmask buttons)
+    7: {
+        0x01: 'main_encoder_press',  # main encoder pressed down (tentative)
+    },
     # byte 8:    main_encoder           (see ENCODER_INPUT)
     # bytes 9+10: encoder1              (see ENCODER_INPUT)
 }
