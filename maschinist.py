@@ -88,6 +88,7 @@ def monitor(device_info):
 
         sent_high = False
         sent_low = False
+        prev_pressed = set()
         while True:
             data = dev.read(64)
             if data and data[0] == 0x20:
@@ -110,8 +111,12 @@ def monitor(device_info):
                     sent_high = False
             elif data and data[0] == 0x01:
                 pressed, encoders = decode_btn_input(data)
-                if pressed:
-                    print(f"buttons: {pressed}")
+                curr_pressed = set(pressed)
+                for btn in curr_pressed - prev_pressed:
+                    print(f"pressed:  {btn}")
+                for btn in prev_pressed - curr_pressed:
+                    print(f"released: {btn}")
+                prev_pressed = curr_pressed
                 if any(v for v in encoders.values()):
                     print(f"encoders: {encoders}")
             else:

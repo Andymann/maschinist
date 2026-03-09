@@ -165,6 +165,7 @@ BTN_INPUT = {
         0x10: 'right',
         0x20: 'enter',
         0x40: 'noterepeat',
+        0x80: 'main_encoder_press',
     },
     4: {
         0x01: 'group_a',
@@ -196,10 +197,8 @@ BTN_INPUT = {
         0x40: 'solo',
         0x80: 'mute',
     },
-    7: {
-        0x01: 'main_encoder_press',  # main encoder pressed down (tentative)
-    },
-    # byte 8:    main_encoder           (see ENCODER_INPUT)
+    # byte 7:    encoder activity flags (see ENCODER_INPUT, not bitmask buttons)
+    # byte 8:    main_encoder value in bits 0-3 (see ENCODER_INPUT)
     # bytes 9+10: encoder1              (see ENCODER_INPUT)
 }
 
